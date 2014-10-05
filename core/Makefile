@@ -562,6 +562,11 @@ else
 ifeq ($(TARGET_USERIMAGES_USE_EXT4),true)
 INTERNAL_USERIMAGES_USE_EXT := true
 INTERNAL_USERIMAGES_EXT_VARIANT := ext4
+else
+ifeq ($(TARGET_USERIMAGES_USE_UBIFS),true)
+# FIXME: this borrow ext's var to generate it.
+INTERNAL_USERIMAGES_EXT_VARIANT := ubifs
+endif
 endif
 endif
 endif
@@ -573,7 +578,11 @@ endif
 ifeq ($(INTERNAL_USERIMAGES_USE_EXT),true)
 INTERNAL_USERIMAGES_DEPS := $(MKEXTUSERIMG) $(MAKE_EXT4FS) $(SIMG2IMG) $(E2FSCK)
 else
+ifeq ($(TARGET_USERIMAGES_USE_UBIFS),true)
+INTERNAL_USERIMAGES_DEPS := $(MKUBIFS)
+else
 INTERNAL_USERIMAGES_DEPS := $(MKYAFFS2)
+endif
 endif
 INTERNAL_USERIMAGES_BINARY_PATHS := $(sort $(dir $(INTERNAL_USERIMAGES_DEPS)))
 
@@ -594,6 +603,7 @@ $(if $(INTERNAL_USERIMAGES_SPARSE_EXT_FLAG),$(hide) echo "extfs_sparse_flag=$(IN
 $(if $(mkyaffs2_extra_flags),$(hide) echo "mkyaffs2_extra_flags=$(mkyaffs2_extra_flags)" >> $(1))
 $(hide) echo "selinux_fc=$(SELINUX_FC)" >> $(1)
 $(if $(2),$(hide) $(foreach kv,$(2),echo "$(kv)" >> $(1);))
+$(if $(TARGET_MKUBIFS_ARGS),$(hide) echo "mkfsubifs_flags=$(TARGET_MKUBIFS_ARGS)" >> $(1))
 endef
 
 # -----------------------------------------------------------------
@@ -624,10 +634,19 @@ endif
 recovery_resources_private := $(strip $(wildcard $(TARGET_DEVICE_DIR)/recovery/res))
 recovery_resource_deps := $(shell find $(recovery_resources_common) \
   $(recovery_resources_private) -type f)
+
+ifeq ($(TARGET_USERIMAGES_USE_UBIFS),true)
+ifdef TARGET_RECOVERY_FSTAB
+recovery_fstab := $(TARGET_RECOVERY_FSTAB)
+else
+recovery_fstab := $(strip $(wildcard $(TARGET_DEVICE_DIR)/recovery_nand.fstab))
+endif
+else
 ifdef TARGET_RECOVERY_FSTAB
 recovery_fstab := $(TARGET_RECOVERY_FSTAB)
 else
 recovery_fstab := $(strip $(wildcard $(TARGET_DEVICE_DIR)/recovery.fstab))
+endif
 endif
 # Named '.dat' so we don't attempt to use imgdiff for patching it.
 RECOVERY_RESOURCE_ZIP := $(TARGET_OUT)/etc/recovery-resource.dat
@@ -704,6 +723,7 @@ $(INSTALLED_RECOVERYIMAGE_TARGET): $(MKBOOTFS) $(MKBOOTIMG) $(MINIGZIP) \
 	$(hide) cp $(RECOVERY_INSTALL_OTA_KEYS) $(TARGET_RECOVERY_ROOT_OUT)/res/keys
 	$(hide) cat $(INSTALLED_DEFAULT_PROP_TARGET) $(recovery_build_prop) \
 	        > $(TARGET_RECOVERY_ROOT_OUT)/default.prop
+	$(hide) if [ -d $(TARGET_RECOVERY_OUT) ]; then find $(TARGET_RECOVERY_OUT) -name '*.svn' | xargs rm -rf; fi
 	$(hide) $(MKBOOTFS) $(TARGET_RECOVERY_ROOT_OUT) | $(MINIGZIP) > $(recovery_ramdisk)
 	$(hide) $(MKBOOTIMG) $(INTERNAL_RECOVERYIMAGE_ARGS) $(BOARD_MKBOOTIMG_ARGS) --output $@
 	$(hide) $(call assert-max-image-size,$@,$(BOARD_RECOVERYIMAGE_PARTITION_SIZE),raw)
@@ -716,6 +736,108 @@ $(RECOVERY_RESOURCE_ZIP): $(INSTALLED_RECOVERYIMAGE_TARGET)
 else
 INSTALLED_RECOVERYIMAGE_TARGET :=
 RECOVERY_RESOURCE_ZIP :=
+endif
+
+.PHONY: bootloader
+ifneq ($(strip $(TARGET_BOOTLOADER_CONFIG)),)
+BOOTLOADER_CROSS_TOOLCHAIN := `pwd`/prebuilts/gcc/linux-x86/arm/arm-eabi-4.6/bin/arm-eabi-
+BOOTLOADER_ENV := ARCH=arm CROSS_COMPILE=$(BOOTLOADER_CROSS_TOOLCHAIN)
+HOST_PROCESSOR := $(shell cat /proc/cpuinfo | grep processor | wc -l)
+TARGET_BOOTLOADER_IMAGE := $(PRODUCT_OUT)/u-boot.bin
+
+BOOTLOADER_PATH := bootable/bootloader/uboot-imx/
+BOOTLOADER_CONFIG_FILE := $(BOOTLOADER_PATH)/include/config.h
+
+bootloader: $(TARGET_BOOTLOADER_IMAGE)
+
+$(TARGET_BOOTLOADER_IMAGE):
+	@for ubootplat in $(TARGET_BOOTLOADER_CONFIG); do \
+		UBOOT_PLATFORM=`echo $$ubootplat | cut -d':' -f1`; \
+		UBOOT_CONFIG=`echo $$ubootplat | cut -d':' -f2`; \
+		$(MAKE) -C bootable/bootloader/uboot-imx/ distclean $(BOOTLOADER_ENV); \
+		$(MAKE) -C bootable/bootloader/uboot-imx/ $$UBOOT_CONFIG $(BOOTLOADER_ENV); \
+		$(MAKE) -C bootable/bootloader/uboot-imx/ $(BOOTLOADER_ENV); \
+		install -D bootable/bootloader/uboot-imx/u-boot.bin $(PRODUCT_OUT)/u-boot-$$UBOOT_PLATFORM.bin; \
+		install -D bootable/bootloader/uboot-imx/u-boot.bin $@; \
+	done
+else
+bootloader:
+endif
+
+.PHONY: kernelimage
+ifneq ($(strip $(TARGET_NO_KERNEL)),true)
+KERNEL_CROSS_TOOLCHAIN := `pwd`/prebuilts/gcc/linux-x86/arm/arm-eabi-4.6/bin/arm-eabi-
+KERNEL_ENV := ARCH=arm CROSS_COMPILE=$(KERNEL_CROSS_TOOLCHAIN)
+HOST_PROCESSOR := $(shell cat /proc/cpuinfo | grep processor | wc -l)
+INSTALLED_KERNEL_TARGET := $(PRODUCT_OUT)/kernel
+TARGET_PREBUILT_KERNEL := $(PRODUCT_OUT)/kernel
+KERNEL_CONFIGURE := kernel_imx/.config
+TARGET_KERNEL_CONFIGURE := $(PRODUCT_OUT)/.config
+KERNEL_ZIMAGE    := kernel_imx/arch/arm/boot/zImage
+KERNEL_UIMAGE    := kernel_imx/arch/arm/boot/uImage
+KERNEL_OUT := $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ
+
+
+.PHONY: $(TARGET_PREBUILT_KERNEL)
+kernelimage: $(TARGET_PREBUILT_KERNEL)
+
+$(KERNEL_CONFIGURE): kernel_imx/arch/arm/configs/$(TARGET_KERNEL_DEFCONF)
+
+$(TARGET_KERNEL_CONFIGURE): kernel_imx/arch/arm/configs/$(TARGET_KERNEL_DEFCONF) $(KERNEL_CONFIGURE)
+	$(MAKE) -C kernel_imx $(TARGET_KERNEL_DEFCONF) $(KERNEL_ENV)
+	install -D $(KERNEL_CONFIGURE) $(TARGET_KERNEL_CONFIGURE)
+
+$(TARGET_PREBUILT_KERNEL): $(TARGET_KERNEL_CONFIGURE)
+	$(MAKE) -C kernel_imx -j$(HOST_PROCESSOR) uImage $(KERNEL_ENV)
+	install -D $(KERNEL_UIMAGE)  $(PRODUCT_OUT)/uImage
+	install -D $(KERNEL_ZIMAGE)  $(PRODUCT_OUT)/kernel
+
+else
+kernelimage:
+endif
+
+.PHONY: kernelmodules
+
+kernel_modules_src_list :=
+kernel_modules_dist_list :=
+
+$(foreach cf,$(TARGET_KERNEL_MODULES),							\
+$(eval _src := $(call word-colon,1,$(cf)))						\
+$(eval _dest := $(call word-colon,2,$(cf)))						\
+$(eval kernel_modules_src_list += $(_src))						\
+$(eval kernel_modules_dest_list += $(call append-path,$(PRODUCT_OUT),$(_dest))))
+
+ifneq ($(strip $(kernel_modules_src_list)),)
+
+kernelmodules: $(TARGET_PREBUILT_KERNEL) | $(ACP)
+	$(MAKE) -C kernel_imx modules $(KERNEL_ENV)
+	$(hide) $(foreach cf, $(TARGET_KERNEL_MODULES),				\
+	$(eval _src := $(call word-colon,1,$(cf)))				\
+	$(eval _dest := $(call word-colon,2,$(cf)))				\
+	$(eval _full_dest := $(call append-path,$(PRODUCT_OUT),$(_dest)))	\
+	$(eval _dest_dir := $(call dir, $(_full_dest))) 			\
+	mkdir -p $(_dest_dir); 							\
+	$(ACP) $(_src) $(_full_dest);						\
+	)
+	@echo "install kernel modules: $(kernel_modules_src_list)"
+else
+kernelmodules:
+endif
+# ----------------------------------------------------------------
+# support ubifs rules:
+.PHONY: ubiimagesgenerate
+ifeq ($(TARGET_USERIMAGES_USE_UBIFS),true)
+UBI_RAW_IMAGE := $(PRODUCT_OUT)/android_root.img
+
+.PHONY: $(UBI_RAW_IMAGE)
+
+ubiimagesgenerate: $(UBI_RAW_IMAGE)
+
+$(UBI_RAW_IMAGE) : $(INSTALLED_USERDATAIMAGE_TARGET) systemimage
+	$(call pretty,"Generating UBI raw image:" "$(UBI_RAW_IMAGE)" "$(UBI_RAW_RECO_IMAGE)")
+	$(MKUBIRAW) -o $(UBI_RAW_IMAGE) $(TARGET_UBIRAW_ARGS)
+else
+ubiimagesgenerate:
 endif
 
 .PHONY: recoveryimage
