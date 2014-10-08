@@ -782,7 +782,8 @@ droidcore: kernelimage \
 	$(INSTALLED_CACHEIMAGE_TARGET) \
 	$(INSTALLED_VENDORIMAGE_TARGET) \
 	$(INSTALLED_FILES_FILE) \
-	ubiimagesgenerate
+	ubiimagesgenerate \
+	packimages
 
 # dist_files only for putting your library into the dist directory with a full build.
 .PHONY: dist_files

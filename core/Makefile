@@ -957,6 +957,28 @@ $(warning Warning: with dexpreopt enabled, you may need a full rebuild.)
 endif
 endif
 
+.PHONY: packimages
+PACKDIR = $(TOPDIR)img_pack
+packimages: $(TARGET_PREBUILT_KERNEL) \
+	$(TARGET_BOOTLOADER_IMAGE) \
+	$(INSTALLED_SYSTEMIMAGE) \
+	$(INSTALLED_RAMDISK_TARGET) \
+	$(INSTALLED_RECOVERYIMAGE_TARGET)
+	@echo "Pack images"
+	if [ -d $(TOPDIR)img_pack ]; then \
+		rm -rf $(PACKDIR); \
+	fi
+	mkdir $(TOPDIR)img_pack
+#	test -f $(TARGET_PREBUILT_KERNEL) && cp $(TARGET_PREBUILT_KERNEL) $(PACKDIR)
+#	test -f $(PRODUCT_OUT)/u-boot.bin && cp  $(PRODUCT_OUT)/u-boot.bin $(PACKDIR)
+	test -f $(TOPDIR)bootable/bootloader/uboot-imx/u-boot.bin && \
+		cp $(TOPDIR)bootable/bootloader/uboot-imx/u-boot.bin $(PACKDIR)
+	test -f $(INSTALLED_SYSTEMIMAGE) && cp $(INSTALLED_SYSTEMIMAGE) $(PACKDIR)
+	test -f $(INSTALLED_RECOVERYIMAGE_TARGET) && cp $(INSTALLED_RECOVERYIMAGE_TARGET) $(PACKDIR)
+	test -f $(INSTALLED_BOOTIMAGE_TARGET) && cp $(INSTALLED_BOOTIMAGE_TARGET) $(PACKDIR)
+	cp $(TOPDIR)make_sd2.sh $(PACKDIR)
+	tar jcf img_pack.tar.bz2 $(PACKDIR)
+
 #######
 ## system tarball
 define build-systemtarball-target
