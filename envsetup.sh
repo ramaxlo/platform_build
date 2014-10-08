@@ -1278,3 +1278,7 @@ done
 unset f
 
 addcompletions
+
+export USE_CCACHE=1
+export CCACHE_DIR=~/android/.ccache
+$(gettop)/prebuilts/misc/linux-x86/ccache/ccache -M 50G
